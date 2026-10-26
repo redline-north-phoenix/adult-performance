@@ -10,34 +10,45 @@ const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxSOhVeJSmJ_FavUwe0v
 const form = document.getElementById('interestForm');
 const statusEl = document.getElementById('status');
 const btn = document.getElementById('submitBtn');
-let pendingId = null;
-let pendingTimeout = null;
-const allowedOrigins = ['https://script.google.com','https://script.googleusercontent.com'];
-window.addEventListener('message', (event) => {
-  if (!allowedOrigins.includes(event.origin)) return;
-  const data = event.data;
-  if (!data || data.type !== 'redline-priority-result' || data.id !== pendingId) return;
-  clearTimeout(pendingTimeout); pendingId = null;
-  btn.disabled = false; btn.textContent = 'JOIN THE PRIORITY LIST →';
-  if (data.ok === true) { form.hidden = true; document.getElementById('success').hidden = false; }
-  else statusEl.textContent = 'We could not save your registration. Please contact the front desk.';
-});
-form.addEventListener('submit', (event) => {
-  event.preventDefault(); statusEl.textContent = '';
+let submitting = false;
+function checkSaved(id) {
+  return new Promise(resolve => {
+    const callback = 'redlineStatus_' + Math.random().toString(36).slice(2);
+    const script = document.createElement('script');
+    let finished = false;
+    const finish = saved => { if (finished) return; finished = true; clearTimeout(timer); delete window[callback]; script.remove(); resolve(saved); };
+    window[callback] = data => finish(data && data.saved === true);
+    script.onerror = () => finish(false);
+    const timer = setTimeout(() => finish(false), 7000);
+    script.src = SCRIPT_URL + '?id=' + encodeURIComponent(id) + '&callback=' + callback + '&t=' + Date.now();
+    document.body.appendChild(script);
+  });
+}
+async function awaitSaved(id) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    if (await checkSaved(id)) return true;
+    if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  return false;
+}
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (submitting) return;
+  statusEl.textContent = '';
   if (!form.reportValidity()) return;
   const times = [...form.querySelectorAll('input[name="time"]:checked')].map(el => el.value);
   if (!times.length) { statusEl.textContent = 'Please select at least one preferred training time.'; return; }
   const selectedInterest = form.querySelector('input[name="interest"]:checked');
   if (!selectedInterest) { statusEl.textContent = 'Please select your interest level.'; return; }
   const data = {name:form.elements['name'].value.trim(),email:form.elements['email'].value.trim(),phone:form.elements['phone'].value.trim(),times:times.join(', '),interest:selectedInterest.value,source:form.elements['source'].value,consent:document.getElementById('consent').checked,website:form.elements['website'].value};
-  pendingId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + String(Math.random());
-  data.id = pendingId;
-  btn.disabled=true; btn.textContent='SUBMITTING…';
-  const postForm=document.createElement('form');
-  postForm.method='POST'; postForm.action=SCRIPT_URL; postForm.target='redlineSubmissionFrame'; postForm.style.display='none';
-  const field=document.createElement('input'); field.type='hidden'; field.name='payload'; field.value=JSON.stringify(data);
-  postForm.appendChild(field); document.body.appendChild(postForm);
-  postForm.submit(); postForm.remove();
-  pendingTimeout=setTimeout(()=>{ if(pendingId===data.id){pendingId=null;btn.disabled=false;btn.textContent='JOIN THE PRIORITY LIST →';statusEl.textContent='We could not confirm your submission. Please check with the front desk before submitting again.';} }, 20000);
+  data.id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
+  submitting = true; btn.disabled = true; btn.textContent = 'SUBMITTING…';
+  const postForm = document.createElement('form');
+  postForm.method = 'POST'; postForm.action = SCRIPT_URL; postForm.target = 'redlineSubmissionFrame'; postForm.style.display = 'none';
+  const field = document.createElement('input'); field.type = 'hidden'; field.name = 'payload'; field.value = JSON.stringify(data);
+  postForm.appendChild(field); document.body.appendChild(postForm); postForm.submit(); postForm.remove();
+  const saved = await awaitSaved(data.id);
+  if (saved) { form.hidden = true; document.getElementById('success').hidden = false; }
+  else { statusEl.textContent = 'We could not verify your registration. Please check with the front desk before trying again.'; btn.disabled = false; btn.textContent = 'JOIN THE PRIORITY LIST →'; submitting = false; }
 });
 </script></body></html>
